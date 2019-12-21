@@ -9,6 +9,15 @@ TagManager:
   - SongSettings
   - SceneHandling
   - CubeNonDirection
+  - ScoreHandling
+  - ExcludeTeleport
+  - AudioHandling
+  - CancelSceneHandling
+  - Cube
+  - HighScore
+  - CubeSlicer
+  - SaberManager
+  - Saber
   layers:
   - Default
   - TransparentFX
@@ -20,9 +29,9 @@ TagManager:
   - 
   - RedLayer
   - BlueLayer
-  - 
-  - 
-  - 
+  - Wall
+  - ThirdCamera
+  - PostProcessing
   - 
   - 
   - 

@@ -92,7 +92,7 @@ GameObject:
   - component: {fileID: 7735831082280574881}
   m_Layer: 8
   m_Name: Red Cube
-  m_TagString: Untagged
+  m_TagString: Cube
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
@@ -106,7 +106,7 @@ Transform:
   m_GameObject: {fileID: 2267269557703769182}
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0.18426193, y: 2.8264437, z: -1.5359669}
-  m_LocalScale: {x: 0.3, y: 0.3, z: 0.3}
+  m_LocalScale: {x: 0.4, y: 0.4, z: 0.4}
   m_Children:
   - {fileID: 2267269555990651316}
   m_Father: {fileID: 0}
@@ -182,6 +182,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 6555c85f10c6e2d46a44fe1bec838b07, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  AnticipationPosition: 0
-  Speed: 0
-  WarmUpPosition: 0
+  _songTime: 0
+  _refNotesSpawner: {fileID: 0}
+  _startPos: {x: 0, y: 0, z: 0}
+  _midPos: {x: 0, y: 0, z: 0}
+  _endPos: {x: 0, y: 0, z: 0}

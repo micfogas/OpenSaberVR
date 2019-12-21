@@ -1,4 +1,4 @@
-﻿/*
+/*
  * The spawner code and also the correct timing stuff was taken from the project:
  * BeatSaver Viewer (https://github.com/supermedium/beatsaver-viewer) and ported to C#.
  * 
@@ -17,12 +17,17 @@ using System.IO;
 using UnityEngine;
 using UnityEngine.Networking;
 using UnityEngine.SceneManagement;
+using System.Linq;
 
+[RequireComponent(typeof(AudioSource))]
 public class NotesSpawner : MonoBehaviour
 {
-    public GameObject[] Cubes;
-    public GameObject Wall;
-    public Transform[] SpawnPoints;
+    [SerializeField]
+    GameObject[] Cubes;
+    [SerializeField]
+    private SongData songData;
+    [SerializeField]
+    GameObject Wall;
 
     private string jsonString;
     private string audioFilePath;
@@ -30,64 +35,107 @@ public class NotesSpawner : MonoBehaviour
     private List<Obstacle> ObstaclesToSpawn = new List<Obstacle>();
     private double BeatsPerMinute;
 
-    private double BeatsTime = 0;
-    private double? BeatsPreloadTime = 0;
-    private double BeatsPreloadTimeTotal = 0;
+    public int _noteIndex = 0;
+    public int _eventIndex = 0;
+    public int _obstacleIndex = 0;
 
-    private readonly double beatAnticipationTime = 1.1;
-    private readonly double beatSpeed = 8.0;
-    private readonly double beatWarmupTime = BeatsConstants.BEAT_WARMUP_TIME / 1000;
-    private readonly double beatWarmupSpeed = BeatsConstants.BEAT_WARMUP_SPEED;
+    public float _BeatPerMin;
+    public float _BeatPerSec;
+    public float _SecPerBeat;
+    public float _spawnOffset;
+    public float _noteSpeed;
+    public float BeatsTime;
 
-    private AudioSource audioSource;
+    SceneHandling sceneHandling;
+    AudioSource audioSource;
+    GameObject cameraHead;
 
-    private SongSettings Songsettings;
-    private SceneHandling SceneHandling;
     private bool menuLoadInProgress = false;
     private bool audioLoaded = false;
+    private bool paused = false;
+    bool songPlaying;
 
-    void Start()
+
+    public AudioSource AudioSource {
+        get {
+            return audioSource;
+        }
+    }
+
+    void Start() {
+        cameraHead = GameObject.FindGameObjectWithTag("MainCamera");
+        sceneHandling = GameObject.FindGameObjectWithTag("SceneHandling").GetComponent<SceneHandling>();
+        audioSource = GetComponent<AudioSource>();
+    }
+
+    private IEnumerator LoadAudio() {
+        yield return null;
+        audioSource.clip = OggClipLoader.LoadClip(audioFilePath);
+        audioLoaded = true;
+        yield return null;
+    }
+
+    public void PlaySongWithDifficulty(string songHash, string difficulty, string playingMethod)
     {
-        Songsettings = GameObject.FindGameObjectWithTag("SongSettings").GetComponent<SongSettings>();
-        SceneHandling = GameObject.FindGameObjectWithTag("SceneHandling").GetComponent<SceneHandling>();
-        string path = Songsettings.CurrentSong.Path;
+        var song = songData.Songs.First(x => x.Hash == songHash);
+
+        // Still using Songsettings to pass song data to the song summary scene
+        // TODO: Change
+        var songSettings = GameObject.FindGameObjectWithTag("SongSettings").GetComponent<SongSettings>();
+        songSettings.CurrentSong = song;
+        songSettings.SelectedPlayingMethod = playingMethod;
+        songSettings.SelectedDifficulty = difficulty;
+        
+        string path = song.Path;
         if (Directory.Exists(path))
         {
             if (Directory.GetFiles(path, "info.dat").Length > 0)
             {
                 JSONObject infoFile = JSONObject.Parse(File.ReadAllText(Path.Combine(path, "info.dat")));
 
-                var difficultyBeatmapSets = infoFile.GetArray("_difficultyBeatmapSets");
-                foreach (var beatmapSets in difficultyBeatmapSets)
+                JSONArray beatmapSets = null;
+                foreach (var obj in infoFile.GetArray("_difficultyBeatmapSets")) {
+                    if (obj.Obj.GetString("_beatmapCharacteristicName") == playingMethod) {
+                        beatmapSets = obj.Obj.GetArray("_difficultyBeatmaps");
+                        break;
+                    }
+                }
+
+                // TODO: Fix. Null pointer here if the playing method doesn't exist.
+                foreach (var difficultyBeatmaps in beatmapSets)
                 {
-                    foreach (var difficultyBeatmaps in beatmapSets.Obj.GetArray("_difficultyBeatmaps"))
+                    if (difficultyBeatmaps.Obj.GetString("_difficulty") == difficulty)
                     {
-                        if (difficultyBeatmaps.Obj.GetString("_difficulty") == Songsettings.CurrentSong.SelectedDifficulty)
-                        {
-                            audioFilePath = Path.Combine(path, infoFile.GetString("_songFilename"));
-                            jsonString = File.ReadAllText(Path.Combine(path, difficultyBeatmaps.Obj.GetString("_beatmapFilename")));
-                            break;
-                        }
+                        _noteSpeed = (float)difficultyBeatmaps.Obj.GetNumber("_noteJumpMovementSpeed");
+                        audioFilePath = Path.Combine(path, infoFile.GetString("_songFilename"));
+                        jsonString = File.ReadAllText(Path.Combine(path, difficultyBeatmaps.Obj.GetString("_beatmapFilename")));
+                        break;
                     }
                 }
             }
         }
 
-        audioSource = GetComponent<AudioSource>();
-
-        StartCoroutine("LoadAudio");
+        StartCoroutine(LoadAudio());
 
         JSONObject json = JSONObject.Parse(jsonString);
 
-        var bpm = Convert.ToDouble(Songsettings.CurrentSong.BPM);
+        var bpm = Convert.ToDouble(song.BPM);
 
         //Notes
         var notes = json.GetArray("_notes");
         foreach (var note in notes)
         {
+            var type = note.Obj.GetNumber("_type");
+
+            // ignore bombs, will lead to a bug in GenerateNote which spawns a blue note
+            if (type > 1)
+            {
+                continue;
+            }
+
             var n = new Note
             {
-                Hand = (NoteType)note.Obj.GetNumber("_type"),
+                Hand = (NoteType)type,
                 CutDirection = (CutDirection)note.Obj.GetNumber("_cutDirection"),
                 LineIndex = (int)note.Obj.GetNumber("_lineIndex"),
                 LineLayer = (int)note.Obj.GetNumber("_lineLayer"),
@@ -97,109 +145,123 @@ public class NotesSpawner : MonoBehaviour
 
             NotesToSpawn.Add(n);
         }
+        
+        var obstacles = json.GetArray("_obstacles");
+        foreach (var obstacle in obstacles)
+        {
+            var o = new Obstacle
+            {
+                Type = (ObstacleType)obstacle.Obj.GetNumber("_type"),
+                Duration = obstacle.Obj.GetNumber("_duration"),
+                LineIndex = (int)obstacle.Obj.GetNumber("_lineIndex"),
+                TimeInSeconds = (obstacle.Obj.GetNumber("_time") / bpm) * 60,
+                Time = (obstacle.Obj.GetNumber("_time")),
+                Width = (obstacle.Obj.GetNumber("_width"))
+            };
 
-        //Obstacles
-        //var obstacles = json.GetArray("_obstacles");
-        //foreach (var obstacle in obstacles)
-        //{
-        //    var o = new Obstacle
-        //    {
-        //        Type = (ObstacleType)obstacle.Obj.GetNumber("_type"),
-        //        Duration = obstacle.Obj.GetNumber("_duration"),
-        //        LineIndex = (int)obstacle.Obj.GetNumber("_lineIndex"),
-        //        TimeInSeconds = (obstacle.Obj.GetNumber("_time") / bpm) * 60,
-        //        Time = (obstacle.Obj.GetNumber("_time")),
-        //        Width = (obstacle.Obj.GetNumber("_width"))
-        //    };
+            ObstaclesToSpawn.Add(o);
+        }
 
-        //    ObstaclesToSpawn.Add(o);
-        //}
+        Comparison<Note> NoteCompare = (x, y) => x.Time.CompareTo(y.Time);
+        NotesToSpawn.Sort(NoteCompare);
+
+        Comparison<Obstacle> ObsticaleCompare = (x, y) => x.Time.CompareTo(y.Time);
+        ObstaclesToSpawn.Sort(ObsticaleCompare);
 
         BeatsPerMinute = bpm;
-        BeatsPreloadTimeTotal = (beatAnticipationTime + beatWarmupTime);
+        
+        UpdateBeats();
+
+        songPlaying = true;
     }
 
-    private IEnumerator LoadAudio()
+    public void UpdateBeats()
     {
-        var downloadHandler = new DownloadHandlerAudioClip(Songsettings.CurrentSong.AudioFilePath, AudioType.OGGVORBIS);
-        downloadHandler.compressed = false;
-        downloadHandler.streamAudio = true;
-        var uwr = new UnityWebRequest(
-                Songsettings.CurrentSong.AudioFilePath,
-                UnityWebRequest.kHttpVerbGET,
-                downloadHandler,
-                null);
+        _BeatPerMin = (float)BeatsPerMinute;
+        _BeatPerSec = 60 / _BeatPerMin;
+        _SecPerBeat = _BeatPerMin / 60;
 
-        var request = uwr.SendWebRequest();
-        while (!request.isDone)
-            yield return null;
+        UpdateSpawnTime();
+    }
 
-        audioSource.clip = DownloadHandlerAudioClip.GetContent(uwr);
-        audioLoaded = true;
+    public void UpdateSpawnTime()
+    {
+        _spawnOffset = BeatsConstants.BEAT_WARMUP_SPEED / _BeatPerMin + BeatsConstants.BEAT_WARMUP_OFFSET * 0.5f / _noteSpeed;
+    }
+
+    public void UpdateNotes()
+    {
+        if (audioSource.isPlaying) {
+            for (int i = _noteIndex; i < NotesToSpawn.Count; i++) {
+                if ((NotesToSpawn[i].Time * _BeatPerSec) - _spawnOffset < BeatsTime) {
+                    SetupNoteData(NotesToSpawn[i]);
+
+                    _noteIndex++;
+                } else
+                    break;
+            }
+        }
+    }
+
+    public void UpdateObstilcles()
+    {
+        if (audioSource.isPlaying) {
+            for (int i = _obstacleIndex; i < ObstaclesToSpawn.Count; i++) {
+                if ((ObstaclesToSpawn[_obstacleIndex].Time * _BeatPerSec) - _spawnOffset < BeatsTime) {
+                    SetupObstacleData(ObstaclesToSpawn[_obstacleIndex]);
+                    _obstacleIndex++;
+                } else
+                    break;
+            }
+        }
+    }
+
+    private void SetupObstacleData(Obstacle _obstacle)
+    {
+        Vector3 _startZ = transform.forward * (BeatsConstants.BEAT_WARMUP_SPEED + BeatsConstants.BEAT_WARMUP_OFFSET * 0.5f);
+        Vector3 _midZ = _startZ - transform.forward * BeatsConstants.BEAT_WARMUP_SPEED;
+        Vector3 _endZ = _startZ - transform.forward * (BeatsConstants.BEAT_WARMUP_OFFSET + BeatsConstants.BEAT_WARMUP_SPEED);
+
+        Vector3 noteXStart = new Vector3(GetX(_obstacle.LineIndex), _obstacle.Type != ObstacleType.CEILING ? 0.1f : 1.3f, 0f);
+        _startZ += noteXStart;
+        _midZ += noteXStart;
+        _endZ += noteXStart;
+
+        GenerateObstacle(_obstacle, _startZ, _midZ, _endZ);
+    }
+
+    private void SetupNoteData(Note _note)
+    {
+        Vector3 _startZ = transform.forward * (BeatsConstants.BEAT_WARMUP_SPEED + BeatsConstants.BEAT_WARMUP_OFFSET * 0.5f);
+        Vector3 _midZ = _startZ - transform.forward * BeatsConstants.BEAT_WARMUP_SPEED;
+        Vector3 _endZ = _startZ - transform.forward * (BeatsConstants.BEAT_WARMUP_OFFSET + BeatsConstants.BEAT_WARMUP_SPEED);
+
+        Vector3 noteXY = new Vector3(GetX(SetIndex(_note.LineIndex)), GetY(_note.LineLayer), 0);
+        //_startZ += noteXY;
+        _midZ += noteXY;
+        _endZ += noteXY;
+
+        GenerateNote(_note, _startZ, _midZ, _endZ);
     }
 
     void Update()
     {
-        var prevBeatsTime = BeatsTime;
+        if (songPlaying) {
+            if (audioLoaded) {
+                audioLoaded = false;
+                audioSource.Play();
+            }
 
-        if (BeatsPreloadTime == null)
-        {
-            if (!audioSource.isPlaying)
-            {
-                if (!menuLoadInProgress)
-                {
+            BeatsTime = audioSource.time;
+            UpdateNotes();
+            UpdateObstilcles();
+
+            if (_noteIndex > 0 && !audioSource.isPlaying && !paused) {
+                if (!menuLoadInProgress) {
                     menuLoadInProgress = true;
                     StartCoroutine(LoadMenu());
                 }
-                return;
             }
-
-            BeatsTime = (audioSource.time + beatAnticipationTime + beatWarmupTime) * 1000;
-        }
-        else
-        {
-            BeatsTime = BeatsPreloadTime.Value;
-        }
-
-        double msPerBeat = 1000 * 60 / BeatsPerMinute;
-
-        //Notes
-        for (int i = 0; i < NotesToSpawn.Count; ++i)
-        {
-            var noteTime = NotesToSpawn[i].Time * msPerBeat;
-            if (noteTime > prevBeatsTime && noteTime <= BeatsTime)
-            {
-                NotesToSpawn[i].Time = noteTime;
-                GenerateNote(NotesToSpawn[i]);
-            }
-        }
-
-        //Obstacles
-        for (int i = 0; i < ObstaclesToSpawn.Count; ++i)
-        {
-            var noteTime = ObstaclesToSpawn[i].Time * msPerBeat;
-            if (noteTime > prevBeatsTime && noteTime <= BeatsTime)
-            {
-                ObstaclesToSpawn[i].Time = noteTime;
-                GenerateObstacle(ObstaclesToSpawn[i]);
-            }
-        }
-
-        if (BeatsPreloadTime == null) { return; }
-
-        if (BeatsPreloadTime.Value >= BeatsPreloadTimeTotal)
-        {
-            if (audioLoaded)
-            {
-                // Finished preload.
-                BeatsPreloadTime = null;
-                audioSource.Play();
-            }
-        }
-        else
-        {
-            // Continue preload.
-            BeatsPreloadTime += Time.deltaTime;
         }
     }
 
@@ -207,98 +269,120 @@ public class NotesSpawner : MonoBehaviour
     {
         yield return new WaitForSeconds(5);
 
-        yield return SceneHandling.LoadScene("Menu", LoadSceneMode.Additive);
-        yield return SceneHandling.UnloadScene("OpenSaber");
+        yield return sceneHandling.LoadScene(SceneConstants.SCORE_SUMMARY, LoadSceneMode.Additive);
+        yield return sceneHandling.UnloadScene(SceneConstants.GAME);
     }
 
-    void GenerateNote(Note note)
+    void GenerateNote(Note note, Vector3 moveStartPos, Vector3 moveEndPos, Vector3 jumpEndPos)
     {
-        int point = 0;
-
-        switch (note.LineLayer)
-        {
-            case 0:
-                point = note.LineIndex;
-                break;
-            case 1:
-                point = note.LineIndex + 4;
-                break;
-            case 2:
-                point = note.LineIndex + 8;
-                break;
-            default:
-                break;
-        }
-
         if (note.CutDirection == CutDirection.NONDIRECTION)
         {
             // the nondirection cubes are stored at the index+2 in the array
             note.Hand += 2;
         }
 
-        GameObject cube = Instantiate(Cubes[(int)note.Hand], SpawnPoints[point]);
-        cube.transform.localPosition = Vector3.zero;
-
-        float rotation = 0f;
-
-        switch (note.CutDirection)
-        {
-            case CutDirection.TOP:
-                rotation = 0f;
-                break;
-            case CutDirection.BOTTOM:
-                rotation = 180f;
-                break;
-            case CutDirection.LEFT:
-                rotation = 270f;
-                break;
-            case CutDirection.RIGHT:
-                rotation = 90f;
-                break;
-            case CutDirection.TOPLEFT:
-                rotation = 315f;
-                break;
-            case CutDirection.TOPRIGHT:
-                rotation = 45f;
-                break;
-            case CutDirection.BOTTOMLEFT:
-                rotation = 225f;
-                break;
-            case CutDirection.BOTTOMRIGHT:
-                rotation = 125f;
-                break;
-            case CutDirection.NONDIRECTION:
-                rotation = 0f;
-                break;
-            default:
-                break;
-        }
-
-        cube.transform.Rotate(transform.forward, rotation);
-
+        GameObject cube = Instantiate(Cubes[(int)note.Hand], transform);
         var handling = cube.GetComponent<CubeHandling>();
-        handling.AnticipationPosition = (float) (-beatAnticipationTime * beatSpeed - BeatsConstants.SWORD_OFFSET);
-        handling.Speed = (float)beatSpeed;
-        handling.WarmUpPosition = -beatWarmupTime * beatWarmupSpeed;
+        handling.SetupNote(moveStartPos, moveEndPos, jumpEndPos, this, note);
     }
 
-    public void GenerateObstacle(Obstacle obstacle)
+    public void GenerateObstacle(Obstacle obstacle, Vector3 moveStartPos, Vector3 moveEndPos, Vector3 jumpEndPos)
     {
-        double WALL_THICKNESS = 0.5;
-
-        double durationSeconds = 60 * (obstacle.Duration / BeatsPerMinute);
-
-        GameObject wall = Instantiate(Wall, SpawnPoints[obstacle.LineIndex]);
-
+        GameObject wall = Instantiate(Wall, transform);
         var wallHandling = wall.GetComponent<ObstacleHandling>();
-        wallHandling.AnticipationPosition = (float)(-beatAnticipationTime * beatSpeed - BeatsConstants.SWORD_OFFSET);
-        wallHandling.Speed = (float)beatSpeed;
-        wallHandling.WarmUpPosition = -beatWarmupTime * beatWarmupSpeed;
-        wallHandling.Width = obstacle.Width * WALL_THICKNESS;
-        wallHandling.Ceiling = obstacle.Type == ObstacleType.CEILING;
-        wallHandling.Duration = obstacle.Duration;
+        wallHandling.SetupObstacle(obstacle, this, moveStartPos ,moveEndPos, jumpEndPos);
+    }
 
-        //wall.transform.localScale = new Vector3((float)wallHandling.Width, wall.transform.localScale.y, wall.transform.localScale.z);
+    private float GetY(float lineLayer)
+    {
+        float delta = (1.9f - 1.4f);
+
+        if ((int)lineLayer >= 1000 || (int)lineLayer <= -1000)
+        {
+            return 1.4f - delta - delta + (((int)lineLayer) * (delta / 1000f));
+        }
+
+        if ((int)lineLayer > 2)
+        {
+
+            return 1.4f - delta + ((int)lineLayer * delta);
+        }
+
+        if ((int)lineLayer < 0)
+        {
+            return 1.4f - delta + ((int)lineLayer * delta);
+        }
+
+        if (lineLayer == 0)
+        {
+            return 0.85f;
+        }
+        if (lineLayer == 1)
+        {
+            return 1.4f;
+        }
+
+        return 1.9f;
+    }
+    public float GetX(float noteindex)
+    {
+        float num = (-1.5f + noteindex) * 0.6f; //-3f * 0.5f
+
+        if (noteindex >= 1000 || noteindex <= -1000)
+        {
+            num = 0.3f;
+
+            if (noteindex <= -1000)
+                noteindex += 2000;
+
+            num = num + (noteindex * (0.6f / 1000));
+        }
+
+        return num;
+    }
+    public float SetIndex(float lineIndex)
+    {
+        int newlaneCount = 0;
+        if (lineIndex > 3 || lineIndex < 0)
+        {
+            if (lineIndex >= 1000 || lineIndex <= -1000)
+            {
+                int newIndex = (int)lineIndex;
+                bool leftSide = false;
+                if (newIndex <= -1000)
+                {
+                    newIndex += 2000;
+                }
+
+                if (newIndex >= 4000)
+                    leftSide = true;
+
+
+                newIndex = 5000 - newIndex;
+                if (leftSide)
+                    newIndex -= 2000;
+
+                lineIndex = newIndex;
+            }
+
+            else if (lineIndex > 3)
+            {
+                int diff = (((int)lineIndex - 3) * 2);
+                newlaneCount = 4 + diff;
+                lineIndex = newlaneCount - diff - 1 - lineIndex;
+
+            }
+            else if (lineIndex < 0)
+            {
+                int diff = ((0 - (int)lineIndex)) * 2;
+                newlaneCount = 4 + diff;
+                lineIndex = newlaneCount - diff - 1 - lineIndex;
+            }
+
+            lineIndex = lineIndex < 0.6f * 3 ? Mathf.Abs(lineIndex) : -lineIndex;
+        }
+
+        return lineIndex;
     }
 
     public class Note
@@ -361,6 +445,28 @@ public class NotesSpawner : MonoBehaviour
     {
         WALL = 0,
         CEILING = 1
+    }
+
+    public enum Mode
+    {
+        preciseHeight,
+        preciseHeightStart
+    };
+
+    public static GameObject GetChildByName(GameObject parent, string childName)
+    {
+        GameObject _childObject = null;
+
+        Transform[] _Children = parent.transform.GetComponentsInChildren<Transform>(true);
+        foreach (Transform _child in _Children)
+        {
+            if (_child.gameObject.name == childName)
+            {
+                return _child.gameObject;
+            }
+        }
+
+        return _childObject;
     }
 }
 

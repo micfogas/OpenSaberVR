@@ -1,28 +1,32 @@
 ﻿using System.Collections;
+using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using VRTK;
 
 public class SceneHandling : MonoBehaviour
 {
+    [SerializeField]
+    SaberManager saberManager;
+
+    GameObject LeftModel;
+    GameObject RightModel;
+
     GameObject LeftController;
     GameObject RightController;
-
-    GameObject LeftSaber;
-    GameObject LeftShaft;
-    GameObject LeftModel;
-
-    GameObject RightSaber;
-    GameObject RightShaft;
-    GameObject RightModel;
 
     VRTK_Pointer RightUIPointer;
 
     bool VRTK_Loaded = false;
 
+    public GameObject debugProfiler;
+
     private void Awake()
     {
         VRTK_SDKManager.SubscribeLoadedSetupChanged(VRSetupLoaded);
+
+        // Wait for the sabers to be loaded before loading any scenes
+        saberManager.OnSabersLoaded.AddListener(SabersLoaded);
     }
 
     private void VRSetupLoaded(VRTK_SDKManager sender, VRTK_SDKManager.LoadedSetupChangeEventArgs e)
@@ -30,18 +34,14 @@ public class SceneHandling : MonoBehaviour
         LeftController = e.currentSetup.actualLeftController;
         RightController = e.currentSetup.actualRightController;
 
-        LeftSaber = LeftController.transform.Find("Saber").gameObject;
-        LeftShaft = LeftController.transform.Find("Shaft").gameObject;
         LeftModel = LeftController.transform.Find("Model").gameObject;
-
-        RightSaber = RightController.transform.Find("Saber").gameObject;
-        RightShaft = RightController.transform.Find("Shaft").gameObject;
         RightModel = RightController.transform.Find("Model").gameObject;
 
         RightUIPointer = RightController.transform.Find("RightController").GetComponent<VRTK_Pointer>();
 
         VRTK_Loaded = true;
-        MenuSceneLoaded();
+
+        saberManager.LoadSabers(e.currentSetup.actualLeftController, e.currentSetup.actualRightController);
     }
 
     private void MenuSceneLoaded()
@@ -49,11 +49,8 @@ public class SceneHandling : MonoBehaviour
         if (!VRTK_Loaded)
             return;
 
-        LeftSaber.SetActive(false);
-        LeftShaft.SetActive(false);
-        
-        RightSaber.SetActive(false);
-        RightShaft.SetActive(false);
+        saberManager.GetSaberObject(false).SetActive(false);
+        saberManager.GetSaberObject(true).SetActive(false);
 
         LeftModel.SetActive(true);
         RightModel.SetActive(true);
@@ -62,11 +59,15 @@ public class SceneHandling : MonoBehaviour
 
     private void SaberSceneLoaded()
     {
-        LeftSaber.SetActive(true);
-        LeftShaft.SetActive(true);
+        var saberCollisionVibrationLevel = PlayerPrefs.GetInt(PrefConstants.SaberCollisionVibrationLevel, 2);
 
-        RightSaber.SetActive(true);
-        RightShaft.SetActive(true);
+        var leftSaber = saberManager.GetSaberObject(false);
+        var rightSaber = saberManager.GetSaberObject(true);
+
+        leftSaber.SetActive(true);
+        leftSaber.GetComponentInChildren<Saber>(true).saberCollisionVibrationLevel = saberCollisionVibrationLevel;
+        rightSaber.SetActive(true);
+        rightSaber.GetComponentInChildren<Saber>(true).saberCollisionVibrationLevel = saberCollisionVibrationLevel;
 
         LeftModel.SetActive(false);
         RightModel.SetActive(false);
@@ -78,31 +79,34 @@ public class SceneHandling : MonoBehaviour
         VRTK_SDKManager.UnsubscribeLoadedSetupChanged(VRSetupLoaded);
     }
 
-    private void Start()
-    {
-        if (!IsSceneLoaded("Menu"))
-        {
-            StartCoroutine(LoadScene("Menu", LoadSceneMode.Additive));
+    void SabersLoaded() {
+        if (!IsSceneLoaded(SceneConstants.SONG_SELECTION)) {
+            StartCoroutine(LoadScene(SceneConstants.SONG_SELECTION, LoadSceneMode.Additive));
         }
 
-        if (VRTK_Loaded)
-        {
+        if (VRTK_Loaded) {
             MenuSceneLoaded();
         }
     }
 
     internal IEnumerator LoadScene(string sceneName, LoadSceneMode mode)
     {
-        if (sceneName == "OpenSaber")
+        debugProfiler.SetActive(PlayerPrefs.GetInt(PrefConstants.ShowProfiler) == 1);
+
+        if (sceneName == SceneConstants.GAME)
         {
             SaberSceneLoaded();
         }
-        else if (sceneName == "Menu")
-        {
-            MenuSceneLoaded();
-        }
+        else MenuSceneLoaded();
 
         yield return SceneManager.LoadSceneAsync(sceneName, mode);
+
+        
+        /*if (sceneName == SceneConstants.GAME) {
+            // Testing scores
+            StartCoroutine(LoadScene("ScoreSummary", LoadSceneMode.Additive));
+            StartCoroutine(UnloadScene("OpenSaber"));
+        }*/
     }
 
     internal IEnumerator UnloadScene(string sceneName)

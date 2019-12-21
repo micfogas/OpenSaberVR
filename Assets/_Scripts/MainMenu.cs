@@ -1,6 +1,8 @@
-﻿using System.Collections;
+﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.Networking;
@@ -9,225 +11,170 @@ using UnityEngine.UI;
 
 public class MainMenu : MonoBehaviour
 {
-    public GameObject SongChooser;
-    public LoadSongInfos SongInfos;
-    public GameObject PanelAreYouSure;
-    public GameObject LevelChooser;
-    public GameObject LevelButtonTemplate;
-    public GameObject Title;
-    public GameObject NoSongsFound;
-    public AudioSource SongPreview;
+    public GameObject[] MenuPanels;
+    public Text Username;
+    public InputField UserInputField;
+    public Text UseSoundFX;
+    public Text SaberVibrationLevelLabel;
+    public Slider SaberVibrationLevel;
+    public Text PerformanceProfiler;
+    public Text UsePostProcessing;
+    public HighScoreBoard ScoreBoard;
 
-    private SongSettings Songsettings;
-    private SceneHandling SceneHandling;
+    private AudioHandling audioHandling;
+    private SceneHandling sceneHandling;
 
-    AudioClip PreviewAudioClip = null;
-    bool PlayNewPreview = false;
+    void UpdatePostProcessingText() {
+        UsePostProcessing.text = GraphicsSettings.IsPostProcessingEnabled ? "enabled" : "disabled";
+    }
 
     private void Awake()
     {
-        Songsettings = GameObject.FindGameObjectWithTag("SongSettings").GetComponent<SongSettings>();
-        SceneHandling = GameObject.FindGameObjectWithTag("SceneHandling").GetComponent<SceneHandling>();
+        audioHandling = GameObject.FindGameObjectWithTag("AudioHandling").GetComponent<AudioHandling>();
+        sceneHandling = GameObject.FindGameObjectWithTag("SceneHandling").GetComponent<SceneHandling>();
+
+        GraphicsSettings.PostProcessingChanged.AddListener(UpdatePostProcessingText);
+    }
+
+    IEnumerator LoadSongSelection() {
+        yield return sceneHandling.LoadScene(SceneConstants.SONG_SELECTION, LoadSceneMode.Additive);
+        yield return sceneHandling.UnloadScene(SceneConstants.MENU_MAIN);
     }
 
     public void ShowSongs()
     {
-        if (SongInfos.AllSongs.Count == 0)
-        {
-            Title.gameObject.SetActive(false);
-            NoSongsFound.gameObject.SetActive(true);
-            return;
-        }
-
-        Songsettings.CurrentSong = SongInfos.AllSongs[SongInfos.CurrentSong];
-
-        Title.gameObject.SetActive(false);
-        PanelAreYouSure.gameObject.SetActive(false);
-        LevelChooser.gameObject.SetActive(false);
-        SongChooser.gameObject.SetActive(true);
-        var song = SongInfos.GetCurrentSong();
-
-        SongInfos.SongName.text = song.Name;
-        SongInfos.Artist.text = song.AuthorName;
-        SongInfos.BPM.text = song.BPM;
-        SongInfos.Levels.text = song.Difficulties.Count.ToString();
-
-        byte[] byteArray = File.ReadAllBytes(song.CoverImagePath);
-        Texture2D sampleTexture = new Texture2D(2, 2);
-        bool isLoaded = sampleTexture.LoadImage(byteArray);
-
-        if (isLoaded)
-        {
-            SongInfos.Cover.texture = sampleTexture;
-        }
-
-        StartCoroutine(PreviewSong(Songsettings.CurrentSong.AudioFilePath));
+        StartCoroutine(LoadSongSelection());
+        /*DisplayPanel("SongChooserPanel");
+        songChooser.ShowChooser();*/
     }
 
-    public IEnumerator PreviewSong(string audioFilePath)
+    public void ShowSettings()
     {
-        SongPreview.Stop();
-        PreviewAudioClip = null;
-        PlayNewPreview = true;
+        DisplayPanel("Settings");
 
-        yield return null;
-
-        var downloadHandler = new DownloadHandlerAudioClip(Songsettings.CurrentSong.AudioFilePath, AudioType.OGGVORBIS);
-        downloadHandler.compressed = false;
-        downloadHandler.streamAudio = true;
-        var uwr = new UnityWebRequest(
-                Songsettings.CurrentSong.AudioFilePath,
-                UnityWebRequest.kHttpVerbGET,
-                downloadHandler,
-                null);
-
-        var request = uwr.SendWebRequest();
-        while(!request.isDone)
-            yield return null;
-
-        PreviewAudioClip = DownloadHandlerAudioClip.GetContent(uwr);
-    }
-
-    private void FixedUpdate()
-    {
-        if (PreviewAudioClip != null && PlayNewPreview)
+        if (PlayerPrefs.GetInt(PrefConstants.UseSoundFx) == 0)
         {
-            PlayNewPreview = false;
-            SongPreview.Stop();
-            SongPreview.clip = PreviewAudioClip;
-            SongPreview.time = 40f;
-            SongPreview.Play();
+            UseSoundFX.text = "off";
         }
-    }
-
-    public void NextSong()
-    {
-        var song = SongInfos.NextSong();
-
-        SongInfos.SongName.text = song.Name;
-        SongInfos.Artist.text = song.AuthorName;
-        SongInfos.BPM.text = song.BPM;
-        SongInfos.Levels.text = song.Difficulties.Count.ToString();
-
-        byte[] byteArray = File.ReadAllBytes(song.CoverImagePath);
-        Texture2D sampleTexture = new Texture2D(2, 2);
-        bool isLoaded = sampleTexture.LoadImage(byteArray);
-
-        if (isLoaded)
+        else if (PlayerPrefs.GetInt(PrefConstants.UseSoundFx) == 1)
         {
-            SongInfos.Cover.texture = sampleTexture;
+            UseSoundFX.text = "on";
         }
 
-        StartCoroutine(PreviewSong(Songsettings.CurrentSong.AudioFilePath));
-    }
-
-    public void PreviousSong()
-    {
-        var song = SongInfos.PreviousSong();
-
-        SongInfos.SongName.text = song.Name;
-        SongInfos.Artist.text = song.AuthorName;
-        SongInfos.BPM.text = song.BPM;
-        SongInfos.Levels.text = song.Difficulties.Count.ToString();
-
-        byte[] byteArray = File.ReadAllBytes(song.CoverImagePath);
-        Texture2D sampleTexture = new Texture2D(2, 2);
-        bool isLoaded = sampleTexture.LoadImage(byteArray);
-
-        if (isLoaded)
-        {
-            SongInfos.Cover.texture = sampleTexture;
+        if (PlayerPrefs.GetInt(PrefConstants.SaberCollisionVibrationLevel) == 0) {
+            SaberVibrationLevelLabel.text = "off";
+            SaberVibrationLevel.value = 0;
+        } else {
+            var level = PlayerPrefs.GetInt(PrefConstants.SaberCollisionVibrationLevel);
+            SaberVibrationLevelLabel.text = level.ToString();
+            SaberVibrationLevel.value = level;
         }
 
-        StartCoroutine(PreviewSong(Songsettings.CurrentSong.AudioFilePath));
-    }
+        PerformanceProfiler.text = PlayerPrefs.GetInt(PrefConstants.ShowProfiler) == 1 ? "enabled" : "disabled";
 
-    public void LoadSong()
-    {
-        SongPreview.Stop();
-        var song = SongInfos.GetCurrentSong();
-        if(song.Difficulties.Count > 1)
+        if (string.IsNullOrWhiteSpace(PlayerPrefs.GetString(PrefConstants.UserName)))
         {
-            foreach (var gameObj in LevelChooser.GetComponentsInChildren<Button>(true))
-            {
-                if (gameObj.gameObject.name == "ButtonTemplate")
-                    continue;
-
-                Destroy(gameObj.gameObject);
-            }
-
-            SongChooser.gameObject.SetActive(false);
-            PanelAreYouSure.gameObject.SetActive(false);
-            LevelChooser.gameObject.SetActive(true);
-
-            var buttonsCreated = new List<GameObject>();
-
-            foreach (var difficulty in song.Difficulties)
-            {
-                var button = GameObject.Instantiate(LevelButtonTemplate, LevelChooser.transform);
-
-                button.GetComponentInChildren<Text>().text = difficulty;
-                button.GetComponentInChildren<Button>().onClick.AddListener(() => StartSceneWithDifficulty(difficulty));
-                button.SetActive(true);
-                buttonsCreated.Add(button);
-            }
-
-            switch (buttonsCreated.Count)
-            {
-                case 2:
-                    buttonsCreated[0].GetComponent<RectTransform>().localPosition = new Vector3(-287, buttonsCreated[0].GetComponent<RectTransform>().localPosition.y);
-                    buttonsCreated[1].GetComponent<RectTransform>().localPosition = new Vector3(287, buttonsCreated[1].GetComponent<RectTransform>().localPosition.y);
-                    break;
-                case 3:
-                    buttonsCreated[0].GetComponent<RectTransform>().localPosition = new Vector3(-287, buttonsCreated[0].GetComponent<RectTransform>().position.y);
-                    buttonsCreated[1].GetComponent<RectTransform>().localPosition = new Vector3(0, buttonsCreated[1].GetComponent<RectTransform>().position.y);
-                    buttonsCreated[2].GetComponent<RectTransform>().localPosition = new Vector3(287, buttonsCreated[2].GetComponent<RectTransform>().position.y);
-                    break;
-                case 4:
-                    buttonsCreated[0].GetComponent<RectTransform>().localPosition = new Vector3(-430, buttonsCreated[0].GetComponent<RectTransform>().localPosition.y);
-                    buttonsCreated[1].GetComponent<RectTransform>().localPosition = new Vector3(-144, buttonsCreated[1].GetComponent<RectTransform>().localPosition.y);
-                    buttonsCreated[2].GetComponent<RectTransform>().localPosition = new Vector3(144, buttonsCreated[2].GetComponent<RectTransform>().localPosition.y);
-                    buttonsCreated[3].GetComponent<RectTransform>().localPosition = new Vector3(430, buttonsCreated[3].GetComponent<RectTransform>().localPosition.y);
-                    break;
-                default:
-                    break;
-            }
+            Username.text = "Player" + UnityEngine.Random.Range(0, int.MaxValue);
+            PlayerPrefs.SetString(PrefConstants.UserName, Username.text);
         }
         else
         {
-            StartSceneWithDifficulty(song.Difficulties[0]);
+            Username.text = PlayerPrefs.GetString(PrefConstants.UserName);
+        }
+
+        UpdatePostProcessingText();
+    }
+
+    public void ShowCredits()
+    {
+        DisplayPanel("Credits");
+    }
+
+    public void ClickKey(string character)
+    {
+        UserInputField.text += character;
+    }
+
+    public void Backspace()
+    {
+        if (UserInputField.text.Length > 0)
+        {
+            UserInputField.text = UserInputField.text.Substring(0, UserInputField.text.Length - 1);
         }
     }
 
-    private void StartSceneWithDifficulty(string difficulty)
+    public void SetUsername()
     {
-        SongInfos.GetCurrentSong().SelectedDifficulty = difficulty;
-        StartCoroutine(LoadSongScene());
-    }
-
-    private IEnumerator LoadSongScene()
-    {
-        yield return SceneHandling.LoadScene("OpenSaber", LoadSceneMode.Additive);
-        yield return SceneHandling.UnloadScene("Menu");
+        Username.text = UserInputField.text;
+        PlayerPrefs.SetString(PrefConstants.UserName, Username.text);
+        UserInputField.text = "";
     }
 
     public void AreYouSure()
     {
-        NoSongsFound.gameObject.SetActive(false);
-        Title.gameObject.SetActive(false);
-        SongChooser.gameObject.SetActive(false);
-        LevelChooser.gameObject.SetActive(false);
-        PanelAreYouSure.gameObject.SetActive(true);
+        DisplayPanel("AreYouSurePanel");
     }
 
     public void No()
     {
-        PanelAreYouSure.gameObject.SetActive(false);
-        Title.gameObject.SetActive(true);
+        DisplayPanel("Title");
     }
 
     public void Yes()
     {
         Application.Quit();
+    }
+
+    public void SetSoundFX()
+    {
+        if (PlayerPrefs.GetInt(PrefConstants.UseSoundFx) == 0)
+        {
+            PlayerPrefs.SetInt(PrefConstants.UseSoundFx, 1);
+            UseSoundFX.text = "on";
+            audioHandling.UseSoundFX = true;
+        }
+        else if (PlayerPrefs.GetInt(PrefConstants.UseSoundFx) == 1)
+        {
+            PlayerPrefs.SetInt(PrefConstants.UseSoundFx, 0);
+            UseSoundFX.text = "off";
+            audioHandling.UseSoundFX = false;
+        }
+    }
+
+    public void SetSabersVibrationLevel() {
+        var level = (int)SaberVibrationLevel.value;
+
+        PlayerPrefs.SetInt(PrefConstants.SaberCollisionVibrationLevel, level);
+
+        if (level == 0) {
+            SaberVibrationLevelLabel.text = "off";
+        } else {
+            SaberVibrationLevelLabel.text = level.ToString();
+        }
+    }
+
+    public void TogglePerformanceProfiler() {
+        var enabled = PlayerPrefs.GetInt(PrefConstants.ShowProfiler) == 0;
+        PlayerPrefs.SetInt(PrefConstants.ShowProfiler, enabled ? 1 : 0);
+        PerformanceProfiler.text = enabled ? "enabled" : "disabled";
+    }
+
+    public void TogglePostProcessing() {
+        GraphicsSettings.SetPostProcessing(!GraphicsSettings.IsPostProcessingEnabled);
+    }
+
+    public void DisplayPanel(string activatePanel)
+    {
+        MenuPanels.ToList().ForEach(m => m.SetActive(false));
+        MenuPanels.ToList().First(m => m.name == activatePanel).SetActive(true);
+    }
+
+    IEnumerator LoadSaberSelection() {
+        yield return sceneHandling.LoadScene(SceneConstants.MENU_SABER_SELECTION, LoadSceneMode.Additive);
+        yield return sceneHandling.UnloadScene(SceneConstants.MENU_MAIN);
+    }
+
+    public void ShowSaberSelection() {
+        StartCoroutine(LoadSaberSelection());
     }
 }
